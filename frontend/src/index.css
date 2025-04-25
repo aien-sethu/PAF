@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@keyframes float {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 0.8;
+  }
+  25% {
+    transform: translate(10px, 10px) rotate(90deg);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translate(0, 20px) rotate(180deg);
+    opacity: 0.8;
+  }
+  75% {
+    transform: translate(-10px, 10px) rotate(270deg);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(0, 0) rotate(360deg);
+    opacity: 0.8;
+  }
+}
+
+.animate-float {
+  animation: float 15s infinite linear;
+}
+
+@keyframes scrollY {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+
+.animate-scrollY {
+  animation: scrollY 10s linear infinite;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
