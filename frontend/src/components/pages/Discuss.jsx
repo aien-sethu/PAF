@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { 
+  fetchPosts, createPost, updatePost, deletePost,
+  likePost, dislikePost, addComment as apiAddComment, 
+  editComment as apiEditComment, deleteComment as apiDeleteComment,
+  setUserContext 
+} from '../../services/api';
 
 const Discuss = () => {
   const { user, isLoggedIn } = useAuth();
-  // Load posts from localStorage on initial render
-  const [posts, setPosts] = useState(() => {
-    const savedPosts = localStorage.getItem('posts');
-    return savedPosts ? JSON.parse(savedPosts) : [];
-  });
+  const [posts, setPosts] = useState([]);
   const [newPost, setNewPost] = useState({
     title: '',
     content: '',
@@ -16,11 +18,39 @@ const Discuss = () => {
   const [editingPost, setEditingPost] = useState(null);
   const [imagePreviews, setImagePreviews] = useState([]); // Change to array for multiple previews
   const [isExpanded, setIsExpanded] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Save posts to localStorage whenever they change
+  // Set user context for API calls
   useEffect(() => {
-    localStorage.setItem('posts', JSON.stringify(posts));
-  }, [posts]);
+    if (isLoggedIn && user) {
+      setUserContext(user.name, user.profileImage);
+    }
+  }, [user, isLoggedIn]);
+
+  // Load posts from API on initial render
+  useEffect(() => {
+    const loadPosts = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchPosts();
+        setPosts(data || []);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching posts:', err);
+        setError('Failed to load posts. Please try again later.');
+        // Fallback to localStorage if API fails
+        const savedPosts = localStorage.getItem('posts');
+        if (savedPosts) {
+          setPosts(JSON.parse(savedPosts));
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPosts();
+  }, []);
 
   // Update handleImageChange to handle multiple files
   const handleImageChange = (e) => {
@@ -71,7 +101,7 @@ const Discuss = () => {
     });
   };
 
-  // Edit post handler
+  // Edit post handler - updated to use API post structure
   const handleEditPost = (post) => {
     if (post.author !== user?.name) {
       alert('You can only edit your own posts');
@@ -101,167 +131,157 @@ const Discuss = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Add delete post handler
-  const handleDeletePost = (postId) => {
+  // Update delete post handler to use API
+  const handleDeletePost = async (postId) => {
     if (!isLoggedIn) {
       alert('Please login to delete posts');
       return;
     }
 
     if (window.confirm('Are you sure you want to delete this post?')) {
-      setPosts(prev => prev.filter(post => post.id !== postId));
+      try {
+        await deletePost(postId);
+        setPosts(prev => prev.filter(post => post.id !== postId));
+      } catch (error) {
+        alert('Failed to delete the post. Please try again.');
+      }
     }
   };
 
-  // Update handleSubmit to properly handle edits
-  const handleSubmit = (e) => {
+  // Update handleSubmit to use API
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!isLoggedIn) {
       alert('Please login to create a post');
       return;
     }
 
-    if (editingPost) {
-      // Update existing post
-      setPosts(prev => prev.map(post => 
-        post.id === editingPost.id 
-          ? {
-              ...post,
-              title: newPost.title,
-              content: newPost.content,
-              images: imagePreviews,
-              edited: true,
-              editedAt: new Date()
-            }
-          : post
-      ));
-      setEditingPost(null);
-    } else {
-      // Create new post
-      const post = {
-        id: Date.now(),
-        title: newPost.title,
-        content: newPost.content,
-        images: imagePreviews,
-        author: user.name,
-        authorImage: user.profileImage || "/src/assets/images/empty-profile.png",
-        timestamp: new Date(),
-        likes: 0,
-        dislikes: 0,
-        comments: []
-      };
-      setPosts(prev => [post, ...prev]);
-    }
+    try {
+      if (editingPost) {
+        // Update existing post via API
+        const updatedPost = await updatePost(editingPost.id, {
+          title: newPost.title,
+          content: newPost.content,
+          images: imagePreviews
+        });
+        
+        setPosts(prev => prev.map(post => 
+          post.id === updatedPost.id ? updatedPost : post
+        ));
+        setEditingPost(null);
+      } else {
+        // Create new post via API
+        const createdPost = await createPost({
+          title: newPost.title,
+          content: newPost.content,
+          images: imagePreviews
+        });
+        
+        setPosts(prev => [createdPost, ...prev]);
+      }
 
-    // Reset form
-    setNewPost({ title: '', content: '', images: [] });
-    setImagePreviews([]);
-    setIsExpanded(false);
+      // Reset form
+      setNewPost({ title: '', content: '', images: [] });
+      setImagePreviews([]);
+      setIsExpanded(false);
+    } catch (error) {
+      alert('Failed to save your post. Please try again.');
+    }
   };
 
-  const handleLike = (postId) => {
+  // Update handleLike to use API
+  const handleLike = async (postId) => {
     if (!isLoggedIn) {
       alert('Please login to like posts');
       return;
     }
 
-    setPosts(prev =>
-      prev.map(post =>
-        post.id === postId ? { ...post, likes: post.likes + 1 } : post
-      )
-    );
+    try {
+      const updatedPost = await likePost(postId);
+      setPosts(prev =>
+        prev.map(post => post.id === postId ? updatedPost : post)
+      );
+    } catch (error) {
+      alert('Failed to like the post. Please try again.');
+    }
   };
 
-  const handleDislike = (postId) => {
+  // Update handleDislike to use API
+  const handleDislike = async (postId) => {
     if (!isLoggedIn) {
       alert('Please login to dislike posts');
       return;
     }
 
-    setPosts(prev =>
-      prev.map(post =>
-        post.id === postId ? { ...post, dislikes: post.dislikes + 1 } : post
-      )
-    );
+    try {
+      const updatedPost = await dislikePost(postId);
+      setPosts(prev =>
+        prev.map(post => post.id === postId ? updatedPost : post)
+      );
+    } catch (error) {
+      alert('Failed to dislike the post. Please try again.');
+    }
   };
 
-  // Update the addComment function to include more comment metadata
-  const addComment = (postId, comment) => {
+  // Update addComment to use API
+  const addComment = async (postId, commentText) => {
     if (!isLoggedIn) {
       alert('Please login to comment');
       return;
     }
 
-    setPosts(prev =>
-      prev.map(post =>
-        post.id === postId
-          ? {
-              ...post,
-              comments: [
-                ...post.comments,
-                { 
-                  id: Date.now(),
-                  text: comment,
-                  author: user.name,
-                  timestamp: new Date(),
-                  edited: false
-                }
-              ]
-            }
-          : post
-      )
-    );
+    try {
+      const updatedPost = await apiAddComment(postId, commentText);
+      setPosts(prev =>
+        prev.map(post => post.id === postId ? updatedPost : post)
+      );
+    } catch (error) {
+      alert('Failed to add comment. Please try again.');
+    }
   };
 
-  // Add new functions for editing and deleting comments
-  const handleEditComment = (postId, commentId) => {
+  // Update handleEditComment to use API
+  const handleEditComment = async (postId, commentId) => {
     const post = posts.find(p => p.id === postId);
-    const comment = post.comments.find(c => c.id === commentId);
+    const comment = post?.comments.find(c => c.id === commentId);
     
-    if (comment.author !== user?.name) {
+    if (!comment || comment.author !== user?.name) {
       alert('You can only edit your own comments');
       return;
     }
 
     const newText = prompt('Edit your comment:', comment.text);
     if (newText && newText !== comment.text) {
-      setPosts(prev =>
-        prev.map(post =>
-          post.id === postId
-            ? {
-                ...post,
-                comments: post.comments.map(c =>
-                  c.id === commentId
-                    ? { ...c, text: newText, edited: true, editedAt: new Date() }
-                    : c
-                )
-              }
-            : post
-        )
-      );
+      try {
+        const updatedPost = await apiEditComment(postId, commentId, newText);
+        setPosts(prev =>
+          prev.map(post => post.id === postId ? updatedPost : post)
+        );
+      } catch (error) {
+        alert('Failed to update comment. Please try again.');
+      }
     }
   };
 
-  const handleDeleteComment = (postId, commentId) => {
+  // Update handleDeleteComment to use API
+  const handleDeleteComment = async (postId, commentId) => {
     const post = posts.find(p => p.id === postId);
-    const comment = post.comments.find(c => c.id === commentId);
+    const comment = post?.comments.find(c => c.id === commentId);
     
-    if (comment.author !== user?.name) {
+    if (!comment || comment.author !== user?.name) {
       alert('You can only delete your own comments');
       return;
     }
 
     if (window.confirm('Are you sure you want to delete this comment?')) {
-      setPosts(prev =>
-        prev.map(post =>
-          post.id === postId
-            ? {
-                ...post,
-                comments: post.comments.filter(c => c.id !== commentId)
-              }
-            : post
-        )
-      );
+      try {
+        const updatedPost = await apiDeleteComment(postId, commentId);
+        setPosts(prev =>
+          prev.map(post => post.id === postId ? updatedPost : post)
+        );
+      } catch (error) {
+        alert('Failed to delete comment. Please try again.');
+      }
     }
   };
 
@@ -322,6 +342,35 @@ const Discuss = () => {
     }));
     setImagePreviews(prev => prev.filter((_, i) => i !== index));
   };
+
+  // Add loading state
+  if (loading) {
+    return (
+      <div className="container mx-auto px-4 py-8 flex justify-center items-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-green-500 border-t-transparent mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading discussions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Add error state
+  if (error) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded">
+          <p>{error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-2 bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto px-4 py-8"> {/* Remove max-w-3xl to allow full width */}
@@ -455,160 +504,166 @@ const Discuss = () => {
       </div>
 
       {/* Posts List with grid layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"> {/* Changed from space-y-6 to grid */}
-        {posts.map(post => (
-          <div 
-            key={post.id} 
-            className="bg-gradient-to-br from-white to-blue-50 rounded-xl shadow-md p-6 
-                      hover:shadow-lg transition-all duration-300 border border-gray-200
-                      hover:border-green-400" // Updated background and text colors
-          >
-            {/* Post Header with enhanced styling */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-green-400 to-blue-400 rounded-full blur opacity-30"></div>
-                  <ProfileImage 
-                    user={{ name: post.author }}
-                    className="w-10 h-10 rounded-full relative"
-                  />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-gray-800">{post.author}</h3>
-                  <p className="text-sm text-gray-500">
-                    {new Date(post.timestamp).toLocaleDateString()}
-                    {post.edited && (
-                      <span className="ml-2 text-xs text-gray-400">
-                        • Edited {new Date(post.editedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              {renderPostActions(post)}
-            </div>
-
-            {/* Post Title with enhanced styling */}
-            <h2 className="text-lg font-semibold mb-2 bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
-              {post.title}
-            </h2>
-
-            {/* Post Content with enhanced styling */}
-            <p className="mb-4 text-gray-700 bg-gray-50 p-4 rounded-lg border border-gray-100">
-              {post.content}
-            </p>
-            
-            {/* Update the post image container styles in the posts list */}
-            {post.images && post.images.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
-                {post.images.map((image, index) => (
-                  <div key={index} className="relative group">
-                    <img
-                      src={image}
-                      alt={`Post image ${index + 1}`}
-                      className="w-full h-40 object-cover rounded-lg hover:opacity-90 transition-opacity duration-300"
+      {posts.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-gray-500 text-lg">No posts yet. Be the first to share!</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"> {/* Changed from space-y-6 to grid */}
+          {posts.map(post => (
+            <div 
+              key={post.id} 
+              className="bg-gradient-to-br from-white to-blue-50 rounded-xl shadow-md p-6 
+                        hover:shadow-lg transition-all duration-300 border border-gray-200
+                        hover:border-green-400" // Updated background and text colors
+            >
+              {/* Post Header with enhanced styling */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="absolute -inset-1 bg-gradient-to-r from-green-400 to-blue-400 rounded-full blur opacity-30"></div>
+                    <ProfileImage 
+                      user={{ name: post.author }}
+                      className="w-10 h-10 rounded-full relative"
                     />
                   </div>
-                ))}
-              </div>
-            )}
-
-            {/* Interactions with enhanced styling */}
-            <div className="flex items-center gap-4 border-t border-gray-200 pt-4">
-              <button
-                onClick={() => handleLike(post.id)}
-                className="flex items-center gap-1 text-gray-600 hover:text-green-500 transition-all duration-300 
-                          transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-green-50"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                </svg>
-                <span className="font-medium">{post.likes}</span>
-              </button>
-
-              <button
-                onClick={() => handleDislike(post.id)}
-                className="flex items-center gap-1 text-gray-600 hover:text-blue-500 transition-all duration-300 
-                          transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-blue-50"
-              >
-                <svg className="w-6 h-6 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                </svg>
-                <span className="font-medium">{post.dislikes}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  const comment = prompt('Add a comment:');
-                  if (comment) addComment(post.id, comment);
-                }}
-                className="flex items-center gap-1 text-gray-600 hover:text-green-500 transition-all duration-300 
-                          transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-green-50"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9 8s9-3.582 9-8z" />
-                </svg>
-                <span className="font-medium">{post.comments.length}</span>
-              </button>
-            </div>
-
-            {/* Show edited indicator */}
-            {post.edited && (
-              <div className="text-xs text-gray-500 mt-2">
-                Edited {new Date(post.editedAt).toLocaleDateString()}
-              </div>
-            )}
-
-            {/* Comments with enhanced styling */}
-            {post.comments.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {post.comments.map(comment => (
-                  <div 
-                    key={comment.id} 
-                    className="bg-blue-50/50 backdrop-blur-sm p-3 rounded-lg border border-gray-200
-                              hover:border-green-400 transition-colors duration-300 group"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-green-600">{comment.author}</span>
-                          {comment.edited && (
-                            <span className="text-xs text-gray-500">(edited)</span>
-                          )}
-                        </div>
-                        <p className="text-gray-700 mt-1">{comment.text}</p>
-                      </div>
-                      
-                      {comment.author === user?.name && (
-                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleEditComment(post.id, comment.id)}
-                            className="text-gray-400 hover:text-green-500 transition-colors p-1 rounded-full hover:bg-green-50"
-                            title="Edit comment"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => handleDeleteComment(post.id, comment.id)}
-                            className="text-gray-400 hover:text-blue-500 transition-colors p-1 rounded-full hover:bg-blue-50"
-                            title="Delete comment"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-800">{post.author}</h3>
+                    <p className="text-sm text-gray-500">
+                      {new Date(post.timestamp).toLocaleDateString()}
+                      {post.edited && (
+                        <span className="ml-2 text-xs text-gray-400">
+                          • Edited {new Date(post.editedAt).toLocaleDateString()}
+                        </span>
                       )}
-                    </div>
+                    </p>
                   </div>
-                ))}
+                </div>
+                {renderPostActions(post)}
               </div>
-            )}
-          </div>
-        ))}
-      </div>
+
+              {/* Post Title with enhanced styling */}
+              <h2 className="text-lg font-semibold mb-2 bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
+                {post.title}
+              </h2>
+
+              {/* Post Content with enhanced styling */}
+              <p className="mb-4 text-gray-700 bg-gray-50 p-4 rounded-lg border border-gray-100">
+                {post.content}
+              </p>
+              
+              {/* Update the post image container styles in the posts list */}
+              {post.images && post.images.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+                  {post.images.map((image, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={image}
+                        alt={`Post image ${index + 1}`}
+                        className="w-full h-40 object-cover rounded-lg hover:opacity-90 transition-opacity duration-300"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Interactions with enhanced styling */}
+              <div className="flex items-center gap-4 border-t border-gray-200 pt-4">
+                <button
+                  onClick={() => handleLike(post.id)}
+                  className="flex items-center gap-1 text-gray-600 hover:text-green-500 transition-all duration-300 
+                            transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-green-50"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  <span className="font-medium">{post.likes}</span>
+                </button>
+
+                <button
+                  onClick={() => handleDislike(post.id)}
+                  className="flex items-center gap-1 text-gray-600 hover:text-blue-500 transition-all duration-300 
+                            transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-blue-50"
+                >
+                  <svg className="w-6 h-6 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  <span className="font-medium">{post.dislikes}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const comment = prompt('Add a comment:');
+                    if (comment) addComment(post.id, comment);
+                  }}
+                  className="flex items-center gap-1 text-gray-600 hover:text-green-500 transition-all duration-300 
+                            transform hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-green-50"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9 8s9-3.582 9-8z" />
+                  </svg>
+                  <span className="font-medium">{post.comments.length}</span>
+                </button>
+              </div>
+
+              {/* Show edited indicator */}
+              {post.edited && (
+                <div className="text-xs text-gray-500 mt-2">
+                  Edited {new Date(post.editedAt).toLocaleDateString()}
+                </div>
+              )}
+
+              {/* Comments with enhanced styling */}
+              {post.comments && post.comments.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {post.comments.map(comment => (
+                    <div 
+                      key={comment.id} 
+                      className="bg-blue-50/50 backdrop-blur-sm p-3 rounded-lg border border-gray-200
+                                hover:border-green-400 transition-colors duration-300 group"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-green-600">{comment.author}</span>
+                            {comment.edited && (
+                              <span className="text-xs text-gray-500">(edited)</span>
+                            )}
+                          </div>
+                          <p className="text-gray-700 mt-1">{comment.text}</p>
+                        </div>
+                        
+                        {comment.author === user?.name && (
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => handleEditComment(post.id, comment.id)}
+                              className="text-gray-400 hover:text-green-500 transition-colors p-1 rounded-full hover:bg-green-50"
+                              title="Edit comment"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteComment(post.id, comment.id)}
+                              className="text-gray-400 hover:text-blue-500 transition-colors p-1 rounded-full hover:bg-blue-50"
+                              title="Delete comment"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
