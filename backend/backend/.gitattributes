@@ -1,0 +1,13 @@
+# Set default behavior to maintain line endings
+* text=auto
+
+# Explicitly declare text files to be normalized
+*.java text
+*.js text
+*.jsx text
+*.json text
+*.xml text
+*.properties text
+
+/mvnw text eol=lf
+*.cmd text eol=crlf
